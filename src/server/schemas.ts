@@ -11,3 +11,9 @@ export const createBrowserSchema = z.object({
 export const updateProxySchema = z.object({
   proxy: proxySchema.optional().nullable()
 });
+
+export const updateBrowserSchema = z.object({
+  name: z.string().min(1).max(80),
+  proxy: proxySchema.optional().nullable(),
+  startupUrl: z.string().url().optional().or(z.literal(""))
+});

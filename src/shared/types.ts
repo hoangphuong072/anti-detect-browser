@@ -18,6 +18,7 @@ export interface BrowserRecord {
   status: BrowserStatus;
   desiredStatus: "running" | "stopped";
   noVncPort: number;
+  devtoolsPort: number;
   startupUrl?: string;
   persistentProfile: boolean;
   volumeName?: string;
@@ -31,6 +32,12 @@ export interface CreateBrowserRequest {
   name: string;
   proxy?: BrowserProxy;
   persistentProfile: boolean;
+  startupUrl?: string;
+}
+
+export interface UpdateBrowserRequest {
+  name: string;
+  proxy?: BrowserProxy;
   startupUrl?: string;
 }
 

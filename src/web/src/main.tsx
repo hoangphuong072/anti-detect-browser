@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Monitor, Play, Plus, Power, RefreshCw, Square, Trash2, Wifi } from "lucide-react";
+import { Copy, Edit3, Monitor, Play, Plus, Power, RefreshCw, Square, Trash2, Wifi } from "lucide-react";
 import type { BrowserProxy, BrowserRecord, ProxyScheme, ProxyTestResult } from "../../shared/types";
 import "./styles.css";
 
@@ -30,6 +30,8 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 function App() {
   const [browsers, setBrowsers] = useState<BrowserRecord[]>([]);
   const [selected, setSelected] = useState<BrowserRecord | null>(null);
+  const [editing, setEditing] = useState<BrowserRecord | null>(null);
+  const [editForm, setEditForm] = useState<FormState | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [proxyResult, setProxyResult] = useState<ProxyTestResult | null>(null);
@@ -42,6 +44,8 @@ function App() {
   });
 
   const runningCount = useMemo(() => browsers.filter((browser) => browser.status === "running").length, [browsers]);
+  const integrationBase = window.location.origin;
+  const hermesIntegrationUrl = `${integrationBase}/api/integration/hermes`;
 
   async function load() {
     setError(null);
@@ -90,6 +94,45 @@ function App() {
     });
   }
 
+  function openEdit(browser: BrowserRecord) {
+    const proxy = browser.proxy ? { ...browser.proxy, password: browser.proxy.password === "********" ? "" : browser.proxy.password } : emptyProxy;
+    setEditing(browser);
+    setEditForm({
+      name: browser.name,
+      startupUrl: browser.startupUrl ?? "",
+      persistentProfile: browser.persistentProfile,
+      useProxy: Boolean(browser.proxy),
+      proxy
+    });
+  }
+
+  async function saveEdit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!editing || !editForm) return;
+    await runAction(`edit-${editing.id}`, async () => {
+      await api<BrowserRecord>(`/api/browsers/${editing.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: editForm.name,
+          startupUrl: editForm.startupUrl || undefined,
+          proxy: editForm.useProxy ? editForm.proxy : null
+        })
+      });
+      setEditing(null);
+      setEditForm(null);
+    });
+  }
+
+  async function clearBrowserData(browser: BrowserRecord) {
+    const confirmed = window.confirm(`Clear all data for "${browser.name}"? This removes cookies, cache, and the saved profile volume.`);
+    if (!confirmed) return;
+    await runAction(`clear-${browser.id}`, async () => {
+      await api(`/api/browsers/${browser.id}/clear-data`, { method: "POST" });
+      setEditing(null);
+      setEditForm(null);
+    });
+  }
+
   return (
     <main>
       <header className="topbar">
@@ -108,6 +151,16 @@ function App() {
           Proxy test: {proxyResult.ok ? `OK · ${proxyResult.ip ?? "unknown IP"}` : proxyResult.error}
         </div>
       )}
+
+      <section className="integrationPanel">
+        <div>
+          <strong>Hermes integration</strong>
+          <code>{hermesIntegrationUrl}</code>
+        </div>
+        <button onClick={() => void navigator.clipboard.writeText(hermesIntegrationUrl)}>
+          <Copy size={16} /> Copy
+        </button>
+      </section>
 
       <section className="layout">
         <form className="panel" onSubmit={(event) => void createBrowser(event)}>
@@ -205,6 +258,9 @@ function App() {
                     <button title="Remote" onClick={() => setSelected(browser)} disabled={browser.status !== "running"}>
                       <Monitor size={16} />
                     </button>
+                    <button title="Edit" onClick={() => openEdit(browser)}>
+                      <Edit3 size={16} />
+                    </button>
                     <button title="Test proxy" onClick={() => void testProxy(browser)} disabled={!browser.proxy}>
                       <Wifi size={16} />
                     </button>
@@ -238,6 +294,78 @@ function App() {
             <button onClick={() => setSelected(null)}><Power size={16} /> Close</button>
           </div>
           <iframe title={`Remote ${selected.name}`} src={selected.remoteUrl} />
+        </div>
+      )}
+
+      {editing && editForm && (
+        <div className="modalBackdrop">
+          <form className="editDialog" onSubmit={(event) => void saveEdit(event)}>
+            <div className="dialogHeader">
+              <h2><Edit3 size={18} /> Edit browser</h2>
+              <button type="button" onClick={() => { setEditing(null); setEditForm(null); }}>
+                <Power size={16} /> Close
+              </button>
+            </div>
+            <label>
+              Name
+              <input value={editForm.name} onChange={(event) => setEditForm({ ...editForm, name: event.target.value })} required />
+            </label>
+            <label>
+              Startup URL
+              <input
+                value={editForm.startupUrl}
+                onChange={(event) => setEditForm({ ...editForm, startupUrl: event.target.value })}
+                placeholder="https://example.com"
+              />
+            </label>
+            <label className="check">
+              <input type="checkbox" checked={editForm.useProxy} onChange={(event) => setEditForm({ ...editForm, useProxy: event.target.checked })} />
+              Use proxy
+            </label>
+            {editForm.useProxy && (
+              <div className="proxyGrid">
+                <select
+                  value={editForm.proxy.scheme}
+                  onChange={(event) => setEditForm({ ...editForm, proxy: { ...editForm.proxy, scheme: event.target.value as ProxyScheme } })}
+                >
+                  <option value="http">http</option>
+                  <option value="https">https</option>
+                  <option value="socks4">socks4</option>
+                  <option value="socks5">socks5</option>
+                </select>
+                <input
+                  placeholder="host"
+                  value={editForm.proxy.host}
+                  onChange={(event) => setEditForm({ ...editForm, proxy: { ...editForm.proxy, host: event.target.value } })}
+                />
+                <input
+                  type="number"
+                  placeholder="port"
+                  value={editForm.proxy.port}
+                  onChange={(event) => setEditForm({ ...editForm, proxy: { ...editForm.proxy, port: Number(event.target.value) } })}
+                />
+                <input
+                  placeholder="username"
+                  value={editForm.proxy.username ?? ""}
+                  onChange={(event) => setEditForm({ ...editForm, proxy: { ...editForm.proxy, username: event.target.value || undefined } })}
+                />
+                <input
+                  type="password"
+                  placeholder="password"
+                  value={editForm.proxy.password ?? ""}
+                  onChange={(event) => setEditForm({ ...editForm, proxy: { ...editForm.proxy, password: event.target.value || undefined } })}
+                />
+              </div>
+            )}
+            <div className="dialogActions">
+              <button type="button" className="danger" onClick={() => void clearBrowserData(editing)}>
+                <Trash2 size={16} /> Clear data
+              </button>
+              <button className="primary" disabled={busy === `edit-${editing.id}`}>
+                <Edit3 size={16} /> Save
+              </button>
+            </div>
+          </form>
         </div>
       )}
     </main>

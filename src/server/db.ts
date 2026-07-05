@@ -129,6 +129,7 @@ export class BrowserRepository {
       status: row.status,
       desiredStatus: row.desired_status,
       noVncPort: row.novnc_port,
+      devtoolsPort: row.novnc_port + 1000,
       startupUrl: row.startup_url ?? undefined,
       persistentProfile: Boolean(row.persistent_profile),
       volumeName: row.volume_name ?? undefined,

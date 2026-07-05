@@ -1,7 +1,7 @@
 import Docker from "dockerode";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import type { BrowserProxy, BrowserRecord, BrowserStatus, CreateBrowserRequest, ProxyTestResult } from "../shared/types.js";
+import type { BrowserProxy, BrowserRecord, BrowserStatus, CreateBrowserRequest, ProxyTestResult, UpdateBrowserRequest } from "../shared/types.js";
 import { allocatePort } from "./ports.js";
 import { proxyToUrl } from "./proxy.js";
 import type { BrowserRepository } from "./db.js";
@@ -44,6 +44,7 @@ export class DockerBrowserService {
       status: "created",
       desiredStatus: "stopped",
       noVncPort,
+      devtoolsPort: noVncPort + 1000,
       startupUrl: input.startupUrl,
       persistentProfile: input.persistentProfile,
       volumeName,
@@ -102,6 +103,47 @@ export class DockerBrowserService {
     return this.repo.get(id)!;
   }
 
+  async updateBrowser(id: string, input: UpdateBrowserRequest): Promise<BrowserRecord> {
+    const record = this.mustGet(id);
+    const proxy = this.mergeProxy(record.proxy, input.proxy);
+    const wasRunning = record.status === "running";
+    const runtimeChanged = record.startupUrl !== input.startupUrl || JSON.stringify(record.proxy ?? null) !== JSON.stringify(proxy ?? null);
+    if (!runtimeChanged) {
+      return this.repo.update(id, { name: input.name });
+    }
+
+    const container = await this.findContainer(record);
+    if (container) {
+      await container.remove({ force: true, v: false }).catch(() => undefined);
+    }
+    const next = this.repo.update(id, {
+      name: input.name,
+      startupUrl: input.startupUrl,
+      proxy,
+      containerId: undefined,
+      status: "created"
+    });
+    await this.ensureContainer(next);
+    if (wasRunning) return this.start(id);
+    return this.repo.get(id)!;
+  }
+
+  async clearData(id: string): Promise<BrowserRecord> {
+    const record = this.mustGet(id);
+    const wasRunning = record.status === "running";
+    const container = await this.findContainer(record);
+    if (container) {
+      await container.remove({ force: true, v: false }).catch(() => undefined);
+    }
+    if (record.volumeName) {
+      await this.docker.getVolume(record.volumeName).remove().catch(() => undefined);
+    }
+    const next = this.repo.update(id, { containerId: undefined, status: "created" });
+    await this.ensureContainer(next);
+    if (wasRunning) return this.start(id);
+    return this.repo.get(id)!;
+  }
+
   async testProxy(proxy: BrowserProxy): Promise<ProxyTestResult> {
     try {
       const { stdout } = await execFileAsync(
@@ -137,12 +179,14 @@ export class DockerBrowserService {
         [ID_LABEL]: record.id
       },
       ExposedPorts: {
-        "6080/tcp": {}
+        "6080/tcp": {},
+        "9222/tcp": {}
       },
       HostConfig: {
         Binds: binds,
         PortBindings: {
-          "6080/tcp": [{ HostIp: "127.0.0.1", HostPort: String(record.noVncPort) }]
+          "6080/tcp": [{ HostIp: "127.0.0.1", HostPort: String(record.noVncPort) }],
+          "9222/tcp": [{ HostIp: "127.0.0.1", HostPort: String(record.devtoolsPort) }]
         },
         ShmSize: 1024 * 1024 * 1024
       }
@@ -186,5 +230,14 @@ export class DockerBrowserService {
     const record = this.repo.get(id);
     if (!record) throw new Error("Browser not found");
     return record;
+  }
+
+  private mergeProxy(current: BrowserProxy | undefined, next: BrowserProxy | undefined): BrowserProxy | undefined {
+    if (!next) return undefined;
+    if (!current) return next;
+    if (next.password === "********" || next.password === "") {
+      return { ...next, password: current.password };
+    }
+    return next;
   }
 }

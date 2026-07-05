@@ -40,8 +40,8 @@ RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 WORKDIR /opt/camoufox-runner
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
-COPY start.js ./
 RUN npx camoufox-js fetch
+COPY start.js ./
 RUN chown -R camoufox:camoufox /opt/camoufox-runner /opt/camoufox-browser \
   && chmod 755 /opt/camoufox-runner \
   && chmod 644 /opt/camoufox-runner/start.js

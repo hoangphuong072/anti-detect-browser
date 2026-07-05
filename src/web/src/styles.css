@@ -132,6 +132,11 @@ input, select {
   color: #ffffff;
 }
 
+.danger {
+  border-color: #f3b2ad;
+  color: #b42318;
+}
+
 .tableWrap {
   overflow: auto;
 }
@@ -206,6 +211,32 @@ td span {
   color: #17613c;
 }
 
+.integrationPanel {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid #dbe2ee;
+  border-radius: 8px;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+}
+
+.integrationPanel div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.integrationPanel code {
+  color: #44516a;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .empty {
   color: #67748b;
   padding: 34px;
@@ -235,6 +266,44 @@ td span {
   width: 100%;
 }
 
+.modalBackdrop {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.42);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 18px;
+  position: fixed;
+  z-index: 30;
+}
+
+.editDialog {
+  background: #ffffff;
+  border: 1px solid #dbe2ee;
+  border-radius: 8px;
+  box-shadow: 0 20px 70px rgba(15, 23, 42, 0.24);
+  display: grid;
+  gap: 13px;
+  max-height: calc(100vh - 36px);
+  max-width: 560px;
+  overflow: auto;
+  padding: 18px;
+  width: 100%;
+}
+
+.dialogHeader,
+.dialogActions {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.dialogActions {
+  border-top: 1px solid #e5ebf5;
+  padding-top: 14px;
+}
+
 @media (max-width: 980px) {
   main {
     padding: 16px;
@@ -247,6 +316,11 @@ td span {
   .topbar {
     align-items: start;
     gap: 12px;
+    flex-direction: column;
+  }
+
+  .integrationPanel {
+    align-items: stretch;
     flex-direction: column;
   }
 }

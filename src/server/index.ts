@@ -10,13 +10,14 @@ import { config } from "./config.js";
 import { BrowserRepository } from "./db.js";
 import { DockerBrowserService } from "./docker.js";
 import { redactProxy } from "./proxy.js";
-import { createBrowserSchema, updateProxySchema } from "./schemas.js";
+import { createBrowserSchema, updateBrowserSchema, updateProxySchema } from "./schemas.js";
 
 const app = express();
 const repo = new BrowserRepository(config.databasePath);
 const service = new DockerBrowserService(repo, config.camoufoxImage, config.noVncPortStart, config.noVncPortEnd);
 const wsProxy = httpProxy.createProxyServer({ ws: true, changeOrigin: true });
 const remoteHttpProxies = new Map<number, express.RequestHandler>();
+const devtoolsHttpProxies = new Map<number, express.RequestHandler>();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const webDir = path.resolve(__dirname, "../web");
 
@@ -35,6 +36,18 @@ function getRemoteHttpProxy(port: number) {
     changeOrigin: true
   }) as unknown as express.RequestHandler;
   remoteHttpProxies.set(port, middleware);
+  return middleware;
+}
+
+function getDevtoolsHttpProxy(port: number, browserId: string) {
+  const existing = devtoolsHttpProxies.get(port);
+  if (existing) return existing;
+  const middleware = createProxyMiddleware({
+    target: `http://127.0.0.1:${port}`,
+    changeOrigin: true,
+    pathRewrite: (pathValue) => pathValue.replace(`/devtools/${browserId}`, "") || "/"
+  }) as unknown as express.RequestHandler;
+  devtoolsHttpProxies.set(port, middleware);
   return middleware;
 }
 
@@ -74,6 +87,20 @@ app.get("/api/browsers/:id", async (req, res, next) => {
   }
 });
 
+app.patch("/api/browsers/:id", async (req, res, next) => {
+  try {
+    const parsed = updateBrowserSchema.parse(req.body);
+    const browser = await service.updateBrowser(req.params.id, {
+      name: parsed.name,
+      startupUrl: parsed.startupUrl || undefined,
+      proxy: parsed.proxy ?? undefined
+    });
+    res.json(publicBrowser(browser));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/browsers/:id/start", async (req, res, next) => {
   try {
     res.json(publicBrowser(await service.start(req.params.id)));
@@ -85,6 +112,14 @@ app.post("/api/browsers/:id/start", async (req, res, next) => {
 app.post("/api/browsers/:id/stop", async (req, res, next) => {
   try {
     res.json(publicBrowser(await service.stop(req.params.id)));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/browsers/:id/clear-data", async (req, res, next) => {
+  try {
+    res.json(publicBrowser(await service.clearData(req.params.id)));
   } catch (error) {
     next(error);
   }
@@ -131,12 +166,48 @@ app.get("/api/browsers/:id/remote", async (req, res, next) => {
   }
 });
 
+app.get("/api/integration/hermes", async (req, res, next) => {
+  try {
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    const wsProtocol = req.protocol === "https" ? "wss" : "ws";
+    const wsBaseUrl = `${wsProtocol}://${req.get("host")}`;
+    const browsers = await service.list();
+    res.json({
+      baseUrl,
+      apiUrl: `${baseUrl}/api/browsers`,
+      browsers: browsers.map((browser) => ({
+        id: browser.id,
+        name: browser.name,
+        status: browser.status,
+        startupUrl: browser.startupUrl,
+        remoteUrl: `${baseUrl}${browser.remoteUrl}`,
+        websockifyUrl: `${wsBaseUrl}/remote/${browser.id}/websockify`,
+        devtoolsBaseUrl: `${baseUrl}/devtools/${browser.id}`,
+        devtoolsProtocol: "firefox-webdriver-bidi",
+        bidiWebSocketUrl: `${wsBaseUrl}/devtools/${browser.id}/session`,
+        noVncPort: browser.noVncPort
+      }))
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use(
   "/remote/:id",
   async (req, res, next) => {
     const browser = await service.get(req.params.id);
     if (!browser) return res.status(404).send("Browser not found");
     return getRemoteHttpProxy(browser.noVncPort)(req, res, next);
+  }
+);
+
+app.use(
+  "/devtools/:id",
+  async (req, res, next) => {
+    const browser = await service.get(req.params.id);
+    if (!browser) return res.status(404).send("Browser not found");
+    return getDevtoolsHttpProxy(browser.devtoolsPort, browser.id)(req, res, next);
   }
 );
 
@@ -159,20 +230,21 @@ const server = http.createServer(app);
 server.on("upgrade", async (req, socket, head) => {
   try {
     const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-    const match = pathname.match(/^\/remote\/([^/]+)(\/.*)$/);
+    const match = pathname.match(/^\/(remote|devtools)\/([^/]+)(\/.*)?$/);
     if (!match) {
       socket.destroy();
       return;
     }
 
-    const browser = await service.get(match[1]);
+    const browser = await service.get(match[2]);
     if (!browser) {
       socket.destroy();
       return;
     }
 
-    req.url = `${match[2]}${req.url?.includes("?") ? `?${req.url.split("?")[1]}` : ""}`;
-    wsProxy.ws(req, socket, head, { target: `http://127.0.0.1:${browser.noVncPort}` });
+    req.url = `${match[3] ?? "/"}${req.url?.includes("?") ? `?${req.url.split("?")[1]}` : ""}`;
+    const port = match[1] === "devtools" ? browser.devtoolsPort : browser.noVncPort;
+    wsProxy.ws(req, socket, head, { target: `http://127.0.0.1:${port}` });
   } catch {
     socket.destroy();
   }
