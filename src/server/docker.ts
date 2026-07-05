@@ -1,0 +1,190 @@
+import Docker from "dockerode";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import type { BrowserProxy, BrowserRecord, BrowserStatus, CreateBrowserRequest, ProxyTestResult } from "../shared/types.js";
+import { allocatePort } from "./ports.js";
+import { proxyToUrl } from "./proxy.js";
+import type { BrowserRepository } from "./db.js";
+
+const APP_LABEL = "adb.manager";
+const ID_LABEL = "adb.browser.id";
+const execFileAsync = promisify(execFile);
+
+export class DockerBrowserService {
+  private docker = new Docker();
+
+  constructor(
+    private repo: BrowserRepository,
+    private image: string,
+    private portStart: number,
+    private portEnd: number
+  ) {}
+
+  async list(): Promise<BrowserRecord[]> {
+    const records = this.repo.list();
+    await Promise.all(records.map((record) => this.refreshStatus(record.id).catch(() => undefined)));
+    return this.repo.list();
+  }
+
+  async get(id: string): Promise<BrowserRecord | undefined> {
+    await this.refreshStatus(id).catch(() => undefined);
+    return this.repo.get(id);
+  }
+
+  async create(input: CreateBrowserRequest): Promise<BrowserRecord> {
+    const id = crypto.randomUUID();
+    const noVncPort = await allocatePort(this.portStart, this.portEnd, this.repo.usedPorts());
+    const containerName = `adb-browser-${id.slice(0, 12)}`;
+    const volumeName = input.persistentProfile ? `adb-profile-${id}` : undefined;
+    const now = new Date().toISOString();
+    const record = this.repo.create({
+      id,
+      name: input.name,
+      containerName,
+      status: "created",
+      desiredStatus: "stopped",
+      noVncPort,
+      startupUrl: input.startupUrl,
+      persistentProfile: input.persistentProfile,
+      volumeName,
+      proxy: input.proxy,
+      createdAt: now,
+      updatedAt: now
+    });
+    await this.ensureContainer(record);
+    return this.repo.get(id)!;
+  }
+
+  async start(id: string): Promise<BrowserRecord> {
+    const record = this.mustGet(id);
+    const container = await this.ensureContainer(record);
+    await container.start().catch((error: { statusCode?: number }) => {
+      if (error.statusCode !== 304) throw error;
+    });
+    return this.repo.update(id, { desiredStatus: "running", status: "running" });
+  }
+
+  async stop(id: string): Promise<BrowserRecord> {
+    const record = this.mustGet(id);
+    const container = await this.findContainer(record);
+    if (container) {
+      await container.stop({ t: 10 }).catch((error: { statusCode?: number }) => {
+        if (error.statusCode !== 304 && error.statusCode !== 404) throw error;
+      });
+    }
+    return this.repo.update(id, { desiredStatus: "stopped", status: "stopped" });
+  }
+
+  async remove(id: string, deleteVolume: boolean): Promise<void> {
+    const record = this.mustGet(id);
+    const container = await this.findContainer(record);
+    if (container) {
+      await container.remove({ force: true, v: deleteVolume }).catch((error: { statusCode?: number }) => {
+        if (error.statusCode !== 404) throw error;
+      });
+    }
+    if (deleteVolume && record.volumeName) {
+      await this.docker.getVolume(record.volumeName).remove().catch(() => undefined);
+    }
+    this.repo.delete(id);
+  }
+
+  async updateProxy(id: string, proxy?: BrowserProxy): Promise<BrowserRecord> {
+    const record = this.mustGet(id);
+    const wasRunning = record.status === "running";
+    const container = await this.findContainer(record);
+    if (container) {
+      await container.remove({ force: true, v: false }).catch(() => undefined);
+    }
+    const next = this.repo.update(id, { proxy, containerId: undefined, status: "created" });
+    await this.ensureContainer(next);
+    if (wasRunning) return this.start(id);
+    return this.repo.get(id)!;
+  }
+
+  async testProxy(proxy: BrowserProxy): Promise<ProxyTestResult> {
+    try {
+      const { stdout } = await execFileAsync(
+        "curl",
+        ["--silent", "--show-error", "--fail", "--max-time", "15", "--proxy", proxyToUrl(proxy), "https://api.ipify.org?format=json"],
+        { timeout: 20000 }
+      );
+      const body = JSON.parse(stdout) as { ip?: string };
+      return { ok: Boolean(body.ip), ip: body.ip, body };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  private async ensureContainer(record: BrowserRecord): Promise<Docker.Container> {
+    const existing = await this.findContainer(record);
+    if (existing) return existing;
+
+    const env = [
+      `BROWSER_ID=${record.id}`,
+      `STARTUP_URL=${record.startupUrl ?? "about:blank"}`,
+      `PERSISTENT_PROFILE=${record.persistentProfile ? "1" : "0"}`
+    ];
+    if (record.proxy) env.push(`CAMOUFOX_PROXY=${proxyToUrl(record.proxy)}`);
+
+    const binds = record.volumeName ? [`${record.volumeName}:/home/camoufox/profile`] : [];
+    const container = await this.docker.createContainer({
+      Image: this.image,
+      name: record.containerName,
+      Env: env,
+      Labels: {
+        [APP_LABEL]: "true",
+        [ID_LABEL]: record.id
+      },
+      ExposedPorts: {
+        "6080/tcp": {}
+      },
+      HostConfig: {
+        Binds: binds,
+        PortBindings: {
+          "6080/tcp": [{ HostIp: "127.0.0.1", HostPort: String(record.noVncPort) }]
+        },
+        ShmSize: 1024 * 1024 * 1024
+      }
+    });
+    this.repo.update(record.id, { containerId: container.id, status: "created" });
+    return container;
+  }
+
+  private async findContainer(record: BrowserRecord): Promise<Docker.Container | undefined> {
+    if (record.containerId) {
+      const container = this.docker.getContainer(record.containerId);
+      try {
+        await container.inspect();
+        return container;
+      } catch {
+        return undefined;
+      }
+    }
+    const containers = await this.docker.listContainers({
+      all: true,
+      filters: { label: [`${ID_LABEL}=${record.id}`] }
+    });
+    if (!containers[0]) return undefined;
+    return this.docker.getContainer(containers[0].Id);
+  }
+
+  private async refreshStatus(id: string): Promise<void> {
+    const record = this.repo.get(id);
+    if (!record) return;
+    const container = await this.findContainer(record);
+    if (!container) {
+      this.repo.update(id, { status: "missing", containerId: undefined });
+      return;
+    }
+    const details = await container.inspect();
+    const status: BrowserStatus = details.State.Running ? "running" : "stopped";
+    this.repo.update(id, { status, containerId: details.Id });
+  }
+
+  private mustGet(id: string): BrowserRecord {
+    const record = this.repo.get(id);
+    if (!record) throw new Error("Browser not found");
+    return record;
+  }
+}
