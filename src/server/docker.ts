@@ -186,7 +186,7 @@ export class DockerBrowserService {
         Binds: binds,
         PortBindings: {
           "6080/tcp": [{ HostIp: "127.0.0.1", HostPort: String(record.noVncPort) }],
-          "9222/tcp": [{ HostIp: "127.0.0.1", HostPort: String(record.devtoolsPort) }]
+          "9222/tcp": [{ HostIp: "0.0.0.0", HostPort: String(record.devtoolsPort) }]
         },
         ShmSize: 1024 * 1024 * 1024
       }

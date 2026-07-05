@@ -171,6 +171,7 @@ app.get("/api/integration/hermes", async (req, res, next) => {
     const baseUrl = `${req.protocol}://${req.get("host")}`;
     const wsProtocol = req.protocol === "https" ? "wss" : "ws";
     const wsBaseUrl = `${wsProtocol}://${req.get("host")}`;
+    const directHost = req.hostname;
     const browsers = await service.list();
     res.json({
       baseUrl,
@@ -185,7 +186,10 @@ app.get("/api/integration/hermes", async (req, res, next) => {
         devtoolsBaseUrl: `${baseUrl}/devtools/${browser.id}`,
         devtoolsProtocol: "firefox-webdriver-bidi",
         bidiWebSocketUrl: `${wsBaseUrl}/devtools/${browser.id}/session`,
-        noVncPort: browser.noVncPort
+        directDevtoolsBaseUrl: `http://${directHost}:${browser.devtoolsPort}`,
+        directBidiWebSocketUrl: `ws://${directHost}:${browser.devtoolsPort}/session`,
+        noVncPort: browser.noVncPort,
+        devtoolsPort: browser.devtoolsPort
       }))
     });
   } catch (error) {
