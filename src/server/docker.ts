@@ -163,9 +163,13 @@ export class DockerBrowserService {
   }
 
   private async ensureContainer(record: BrowserRecord): Promise<Docker.Container> {
-    const existing = await this.findContainer(record);
-    if (existing) return existing;
     await this.ensureRuntimeImage();
+    const existing = await this.findContainer(record);
+    if (existing) {
+      if (await this.isContainerUsingCurrentImage(existing)) return existing;
+      await existing.remove({ force: true, v: false }).catch(() => undefined);
+      this.repo.update(record.id, { containerId: undefined, status: "created" });
+    }
 
     const env = [
       `BROWSER_ID=${record.id}`,
@@ -241,6 +245,14 @@ export class DockerBrowserService {
     });
     if (!containers[0]) return undefined;
     return this.docker.getContainer(containers[0].Id);
+  }
+
+  private async isContainerUsingCurrentImage(container: Docker.Container): Promise<boolean> {
+    const [containerDetails, imageDetails] = await Promise.all([
+      container.inspect(),
+      this.docker.getImage(this.image).inspect()
+    ]);
+    return containerDetails.Image === imageDetails.Id;
   }
 
   private async refreshStatus(id: string): Promise<void> {
