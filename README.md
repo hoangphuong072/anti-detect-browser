@@ -20,6 +20,23 @@ npm start
 
 Open http://127.0.0.1:3000.
 
+## Docker Compose / Coolify
+
+The compose setup runs the manager inside a container and mounts the host Docker socket so it can create one Camoufox container per browser.
+
+```bash
+docker compose up -d --build
+```
+
+For Coolify, deploy this repository as a Docker Compose project and keep these settings:
+
+- Expose app port `3000`.
+- Mount `/var/run/docker.sock:/var/run/docker.sock`.
+- Keep the persistent volume `adb-data:/app/data`.
+- Allow direct DevTools ports `60080-60180` on the server firewall if Hermes connects directly to browsers.
+
+On startup the manager container builds `camoufox-vnc:latest` from `runtime/camoufox-vnc` into the host Docker daemon if the image does not already exist. Set `ADB_BUILD_RUNTIME_IMAGE=0` only if you build/push `CAMOUFOX_IMAGE` yourself.
+
 For development:
 
 ```bash
@@ -34,7 +51,8 @@ The Vite dev server runs on http://127.0.0.1:5173 and proxies API/noVNC requests
 - Containers are named `adb-browser-{id}` and labeled with `adb.manager=true`.
 - Persistent browsers get a Docker volume named `adb-profile-{id}` mounted at `/home/camoufox/profile`.
 - noVNC is exposed only on `127.0.0.1` using an allocated port from `NOVNC_PORT_START` to `NOVNC_PORT_END`.
-- The dashboard itself has no auth in v1 and binds to `127.0.0.1` by default.
+- WebDriver BiDi DevTools is exposed directly on `0.0.0.0` using `noVncPort + 1000`, for example `60080`.
+- The dashboard itself has no auth in v1. Bind it to `127.0.0.1` for local-only use or `0.0.0.0` for LAN/tailnet/Coolify.
 
 ## API
 
