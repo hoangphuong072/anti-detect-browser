@@ -65,6 +65,7 @@ export class DockerBrowserService {
     await container.start().catch((error: { statusCode?: number }) => {
       if (error.statusCode !== 304) throw error;
     });
+    await this.waitForStableStart(container, id);
     return this.repo.update(id, { desiredStatus: "running", status: "running" });
   }
 
@@ -253,6 +254,47 @@ export class DockerBrowserService {
     const details = await container.inspect();
     const status: BrowserStatus = details.State.Running ? "running" : "stopped";
     this.repo.update(id, { status, containerId: details.Id });
+  }
+
+  private async waitForStableStart(container: Docker.Container, id: string): Promise<void> {
+    const timeoutMs = Number(process.env.ADB_START_GRACE_MS ?? 6000);
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() < deadline) {
+      const details = await container.inspect();
+      if (!details.State.Running) {
+        this.repo.update(id, { desiredStatus: "running", status: "stopped", containerId: details.Id });
+        throw new Error(await this.describeContainerExit(container, details));
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+  }
+
+  private async describeContainerExit(container: Docker.Container, details: Docker.ContainerInspectInfo): Promise<string> {
+    const exitCode = details.State.ExitCode;
+    const stateError = details.State.Error ? ` (${details.State.Error})` : "";
+    const logs = await container
+      .logs({ stdout: true, stderr: true, tail: 80 })
+      .then((buffer) => this.cleanDockerLogBuffer(buffer).trim())
+      .catch(() => "");
+    const suffix = logs ? `\n\nLast container logs:\n${logs}` : "";
+    return `Browser container stopped during startup with exit code ${exitCode}${stateError}.${suffix}`;
+  }
+
+  private cleanDockerLogBuffer(buffer: Buffer): string {
+    let offset = 0;
+    const chunks: Buffer[] = [];
+
+    while (offset + 8 <= buffer.length) {
+      const size = buffer.readUInt32BE(offset + 4);
+      const start = offset + 8;
+      const end = start + size;
+      if (end > buffer.length) break;
+      chunks.push(buffer.subarray(start, end));
+      offset = end;
+    }
+
+    return (chunks.length ? Buffer.concat(chunks) : buffer).toString("utf8");
   }
 
   private mustGet(id: string): BrowserRecord {
