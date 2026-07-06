@@ -5,6 +5,8 @@ export const config = {
   port: Number(process.env.PORT ?? 3000),
   databasePath: path.resolve(process.env.DATABASE_PATH ?? "./data/adb.sqlite"),
   camoufoxImage: process.env.CAMOUFOX_IMAGE ?? "camoufox-vnc:latest",
+  buildRuntimeImage: process.env.ADB_BUILD_RUNTIME_IMAGE !== "0",
+  runtimeContext: process.env.ADB_RUNTIME_CONTEXT ?? path.resolve("./runtime/camoufox-vnc"),
   noVncPortStart: Number(process.env.NOVNC_PORT_START ?? 59080),
   noVncPortEnd: Number(process.env.NOVNC_PORT_END ?? 59180)
 };

@@ -14,7 +14,14 @@ import { createBrowserSchema, updateBrowserSchema, updateProxySchema } from "./s
 
 const app = express();
 const repo = new BrowserRepository(config.databasePath);
-const service = new DockerBrowserService(repo, config.camoufoxImage, config.noVncPortStart, config.noVncPortEnd);
+const service = new DockerBrowserService(
+  repo,
+  config.camoufoxImage,
+  config.noVncPortStart,
+  config.noVncPortEnd,
+  config.buildRuntimeImage,
+  config.runtimeContext
+);
 const wsProxy = httpProxy.createProxyServer({ ws: true, changeOrigin: true });
 const remoteHttpProxies = new Map<number, express.RequestHandler>();
 const devtoolsHttpProxies = new Map<number, express.RequestHandler>();

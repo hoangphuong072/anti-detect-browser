@@ -12,12 +12,15 @@ const execFileAsync = promisify(execFile);
 
 export class DockerBrowserService {
   private docker = new Docker();
+  private runtimeImagePromise?: Promise<void>;
 
   constructor(
     private repo: BrowserRepository,
     private image: string,
     private portStart: number,
-    private portEnd: number
+    private portEnd: number,
+    private buildRuntimeImage: boolean,
+    private runtimeContext: string
   ) {}
 
   async list(): Promise<BrowserRecord[]> {
@@ -161,6 +164,7 @@ export class DockerBrowserService {
   private async ensureContainer(record: BrowserRecord): Promise<Docker.Container> {
     const existing = await this.findContainer(record);
     if (existing) return existing;
+    await this.ensureRuntimeImage();
 
     const env = [
       `BROWSER_ID=${record.id}`,
@@ -193,6 +197,31 @@ export class DockerBrowserService {
     });
     this.repo.update(record.id, { containerId: container.id, status: "created" });
     return container;
+  }
+
+  private async ensureRuntimeImage(): Promise<void> {
+    try {
+      await this.docker.getImage(this.image).inspect();
+      return;
+    } catch (error) {
+      if (!this.buildRuntimeImage) {
+        throw new Error(`Runtime image ${this.image} is missing. Set ADB_BUILD_RUNTIME_IMAGE=1 or pre-build/push CAMOUFOX_IMAGE.`);
+      }
+    }
+
+    this.runtimeImagePromise ??= this.buildRuntimeImageNow().finally(() => {
+      this.runtimeImagePromise = undefined;
+    });
+    return this.runtimeImagePromise;
+  }
+
+  private async buildRuntimeImageNow(): Promise<void> {
+    console.log(`Runtime image ${this.image} is missing; building from ${this.runtimeContext}`);
+    await execFileAsync("docker", ["build", "-t", this.image, this.runtimeContext], {
+      timeout: 30 * 60 * 1000,
+      maxBuffer: 1024 * 1024 * 20
+    });
+    console.log(`Runtime image ${this.image} built successfully`);
   }
 
   private async findContainer(record: BrowserRecord): Promise<Docker.Container | undefined> {
