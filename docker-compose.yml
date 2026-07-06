@@ -13,7 +13,7 @@ services:
       CAMOUFOX_IMAGE: camoufox-vnc:latest
       NOVNC_PORT_START: 59080
       NOVNC_PORT_END: 59180
-      ADB_BUILD_RUNTIME_IMAGE: ${ADB_BUILD_RUNTIME_IMAGE:-0}
+      ADB_BUILD_RUNTIME_IMAGE: ${ADB_BUILD_RUNTIME_IMAGE:-1}
       ADB_RUNTIME_CONTEXT: /app/runtime/camoufox-vnc
     ports:
       - "3000:3000"
